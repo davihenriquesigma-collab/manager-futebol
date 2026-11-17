@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0a1628">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>Manager de Futebol</title>
 <style>
   :root {
@@ -817,6 +820,11 @@
   .serie-b-card .escudo-img, .serie-b-card .escudo { width: 48px; height: 48px; flex-basis: 48px; }
   .serie-b-card b { display: block; font-size: 15px; }
   .serie-b-card small { color: var(--grey); font-size: 12px; }
+  .tab-l.zona-lib { box-shadow: inset 4px 0 0 #3b82f6; }
+  .tab-l.zona-sul { box-shadow: inset 4px 0 0 #f97316; }
+  .tab-l.zona-g { box-shadow: inset 4px 0 0 #22c55e; }
+  .tab-l.zona-rebx { box-shadow: inset 4px 0 0 #ef4444; }
+  .tab-l.zona-lib .p, .tab-l.zona-g .p { color: var(--txt); }
 </style>
 </head>
 <body>
@@ -1109,18 +1117,17 @@ function aplicarElencosAPI(times) {
 
 // 1) casa por posição; 2) as vagas que sobrarem (laterais, volantes, pontas) recebem os jogadores da API que sobraram
 function aplicarElencoApi(elenco, api) {
-  const porPos = {};
-  api.forEach(a => { (porPos[a.pos] = porPos[a.pos] || []).push(a); });
-  const usados = new Set();
+  // quais posições da API podem preencher cada vaga (nunca goleiro em vaga de linha)
+  const COMPAT = { GOL: ["GOL"], ZAG: ["ZAG"], LAT: ["LAT", "ZAG"], VOL: ["VOL", "MEI"],
+                   MEI: ["MEI", "VOL", "PON"], PON: ["PON", "ATA", "MEI"], ATA: ["ATA", "PON"] };
+  const pools = {};
+  api.forEach(a => { (pools[a.pos] = pools[a.pos] || []).push(a); });
   elenco.forEach(j => {
-    const a = porPos[j.pos] && porPos[j.pos].shift();
-    if (a) { usados.add(j); aplicarDadosApi(j, a); }
-  });
-  const sobras = Object.values(porPos).flat();
-  elenco.forEach(j => {
-    if (usados.has(j)) return;
-    const a = sobras.shift();
-    if (a) aplicarDadosApi(j, a);
+    const ordem = COMPAT[j.pos] || [j.pos];
+    for (const p of ordem) {
+      if (pools[p] && pools[p].length) { aplicarDadosApi(j, pools[p].shift()); return; }
+    }
+    // sem jogador compatível: a vaga fica com o nome provisório
   });
 }
 
@@ -1144,6 +1151,100 @@ async function carregarElencosAPI() {
   } catch (e) {
     // sem internet ou endereço errado: o jogo segue com os dados atuais
   }
+}
+
+// Dívidas dos clubes (R$, fim de 2025, levantamento da Anresf divulgado em 2026)
+const DIVIDAS_REAIS = {"Corinthians":2760000000,"Atlético-MG":2660000000,"São Paulo":2450000000,"Botafogo":2010000000,
+  "Palmeiras":1580000000,"Cruzeiro":1360000000,"Internacional":1270000000,"Flamengo":1260000000,"Santos":1230000000,
+  "Vasco":1100000000,"Fluminense":1040000000,"Grêmio":936000000,"Bragantino":772000000,"Vitória":408000000,
+  "Bahia":407000000,"Athletico-PR":405000000,"Coritiba":185000000,"Chapecoense":174000000,"Remo":37000000,"Mirassol":11000000};
+
+// Sorteio do desempate: no começo de cada carreira, a ordem dos clubes na tabela muda
+function sortearDesempate(times) {
+  times.forEach(t => { t.sorteio = Math.random(); });
+}
+
+function aplicarDividas(times) {
+  times.forEach(t => {
+    if (t.folga) return;
+    const real = DIVIDAS_REAIS[t.nome] || 0;
+    t.dividaReal = real;
+    t.divida = Math.round(real / 500000);
+    t.parcela = Math.max(0, Math.round(t.divida * 0.1));
+    t.saf = false;
+    t.renegociou = false;
+  });
+}
+
+function fmtReal(v) {
+  if (v >= 1e9) return "R$ " + (v / 1e9).toFixed(2).replace(".", ",") + " bi";
+  if (v >= 1e6) return "R$ " + Math.round(v / 1e6) + " mi";
+  return "R$ " + Math.round(v / 1e3) + " mil";
+}
+
+// Cobra a parcela no fim de cada temporada (quando começam os playoffs)
+function cobrarDividas() {
+  const m = estado.meu;
+  if (!m || !m.divida || m.divida <= 0) return;
+  const pago = Math.min(m.parcela, m.divida);
+  m.divida -= pago;
+  m.orcamento = Math.round((m.orcamento - pago) * 10) / 10;
+  if (m.divida === 0) postar("Dívida quitada! O clube está livre dos débitos.", "vitoria");
+  else if (m.orcamento < 0) postar("O caixa ficou negativo por causa das dívidas.", "derrota");
+}
+
+function pagarDivida(valor) {
+  const m = estado.meu;
+  const v = Math.min(valor, m.divida);
+  if (v <= 0) return;
+  if (m.orcamento < v) { mostrarToast("Caixa insuficiente para pagar."); return; }
+  m.orcamento = Math.round((m.orcamento - v) * 10) / 10;
+  m.divida -= v;
+  if (m.divida === 0) postar("Dívida quitada!", "vitoria");
+  render();
+}
+
+function virarSAF() {
+  const m = estado.meu;
+  if (m.saf) return;
+  const aporte = Math.round(m.divida * 0.4);
+  m.saf = true;
+  m.orcamento = Math.round((m.orcamento + aporte) * 10) / 10;
+  m.divida = Math.max(0, m.divida - aporte);
+  estado.torcida = Math.max(0, estado.torcida - 10);
+  postar("O clube virou SAF. Um investidor entrou com " + fmtMil(aporte) + " e parte da dívida foi assumida.", "contrato");
+  render();
+}
+
+function renegociarDivida() {
+  const m = estado.meu;
+  if (m.renegociou || m.divida <= 0) return;
+  m.parcela = Math.max(1, Math.round(m.parcela * 0.5));
+  m.renegociou = true;
+  postar("Dívida renegociada: a parcela por temporada caiu pela metade.", "contrato");
+  render();
+}
+
+function renderDividas() {
+  const m = estado.meu;
+  if (!m) return "";
+  const quitado = m.divida <= 0;
+  return `
+    <div class="secao"><h2>Dívidas</h2><span>${m.saf ? "SAF" : "clube associativo"}</span></div>
+    <div class="card" style="padding:14px">
+      <div class="rep-linha"><span>Dívida total (real)</span><b>${fmtReal(m.dividaReal || 0)}</b></div>
+      <div class="rep-linha"><span>Dívida no jogo</span><b>${fmtMil(m.divida)}</b></div>
+      <div class="rep-linha"><span>Parcela por temporada</span><b>${fmtMil(m.parcela)}${m.renegociou ? " (renegociada)" : ""}</b></div>
+      <div class="rep-linha"><span>Caixa do clube</span><b>${fmtMil(m.orcamento)}</b></div>
+    </div>
+    ${quitado ? '<p class="resumo" style="text-align:center;margin-top:12px">Sem dívidas.</p>' : `
+    <div class="botoes" style="margin-top:12px">
+      <button onclick="pagarDivida(${Math.round(m.parcela) || 1})">Pagar parcela agora</button>
+      <button onclick="pagarDivida(${Math.round(m.divida / 4) || 1})">Pagar 25% da dívida</button>
+      <button onclick="renegociarDivida()" ${m.renegociou ? "disabled" : ""}>Renegociar parcela</button>
+      <button class="primario" onclick="virarSAF()" ${m.saf ? "disabled" : ""}>${m.saf ? "Já é SAF" : "Virar SAF"}</button>
+    </div>`}
+    <p class="nota-rodape">Virar SAF traz um investidor com aporte e assume parte da dívida, mas a torcida reage mal (−10 de torcida).</p>`;
 }
 
 function montarElenco(clube) {
@@ -1187,7 +1288,7 @@ function calendario38(n) {
 // Campeonato Paulista: os quatro grandes de SP jogam entre si, em turno e returno, antes do Brasileirão
 // Competições antes do Brasileirão: Carioca, Paulista e Libertadores (fase de grupos + mata-mata)
 const COMPETICOES = [
-  { id: "carioca", nome: "Campeonato Carioca", abrev: "Carioca", clubes: ["Flamengo", "Vasco", "Fluminense"], dobro: false, classif: 2, chave: "carioca" },
+  { id: "carioca", nome: "Campeonato Carioca", abrev: "Carioca", clubes: ["Flamengo", "Vasco", "Fluminense", "Botafogo"], dobro: false, classif: 2, chave: "carioca" },
   { id: "paulista", nome: "Campeonato Paulista", abrev: "Paulista", clubes: ["Corinthians", "Palmeiras", "Santos", "São Paulo", "Mirassol", "Bragantino"], dobro: true, classif: 4, chave: "paulista" },
   { id: "libertadores", nome: "Copa Libertadores", abrev: "Libertadores", clubes: ["Corinthians", "Palmeiras", "Flamengo", "Santos", "São Paulo", "Vasco", "Fluminense"], dobro: false, classif: 4, chave: "libertadores" }
 ];
@@ -1329,6 +1430,7 @@ function envelhecerElenco() {
 
 function iniciarPlayoff() {
   envelhecerElenco();
+  cobrarDividas();
   const top = estado.times.filter(t => !t.folga)
     .sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)))
     .slice(0, 4).map(t => t.nome);
@@ -1441,6 +1543,8 @@ const estado = {
   estat: {},
   transferencias: [],
   calMes: 0,
+  serieB: [],
+  temporada: 1,
   tecnico: { nome: "Novo técnico", idade: 35, nacionalidade: "Brasil", repNac: 6.0, repInt: 2.5 },
   patrocinios: [],
   patroAtivo: null,
@@ -1896,8 +2000,54 @@ function postarResultado(a, b, gc, gf) {
   }
 }
 
+// ===== Acesso e rebaixamento (no fim de cada temporada) =====
+function timeProvisorio(n) {
+  const rnd = Math.random;
+  const posicoes = [["GOL",3],["ZAG",6],["LAT",3],["VOL",3],["MEI",4],["PON",2],["ATA",3]];
+  const jog = [];
+  posicoes.forEach(([pos, q]) => { for (let k = 0; k < q; k++) jog.push(["Jogador B" + n + pos + (k + 1), pos, 55 + Math.floor(rnd() * 12)]); });
+  return criarTime({ nome: "Clube B" + n, sigla: "B" + n, cor: "#475569", texto: "#ffffff", jog });
+}
+
+function forcaTime(t) {
+  const soma = t.elenco.reduce((s2, j) => s2 + j.ovr, 0);
+  return soma / Math.max(1, t.elenco.length);
+}
+
+function fimDeTemporada() {
+  const meu = estado.meu;
+  const ord = estado.times.filter(t => !t.folga)
+    .sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)) || ((a.sorteio || 0) - (b.sorteio || 0)));
+  // qualquer clube pode cair, inclusive o seu
+  const caem = ord.slice(-4);
+  // sobem os 4 mais fortes da Série B (completa com clubes provisórios se faltar)
+  if (!estado.serieB) estado.serieB = [];
+  let n = 1;
+  while (estado.serieB.length < 4) estado.serieB.push(timeProvisorio(n++));
+  const sobem = [...estado.serieB].sort((a, b) => forcaTime(b) - forcaTime(a)).slice(0, 4);
+  // troca: quem sobe sai da B, quem cai entra na B
+  estado.times = estado.times.filter(t => !caem.includes(t));
+  estado.times = estado.times.concat(sobem);
+  estado.serieB = estado.serieB.filter(t => !sobem.includes(t)).concat(caem);
+  // zera a tabela de todos os clubes
+  [...estado.times, ...estado.serieB].forEach(t => { t.pts = 0; t.gf = 0; t.ga = 0; t.jg = 0; });
+  // novo calendário, competições de novo e nova temporada
+  estado.temporada = (estado.temporada || 1) + 1;
+  estado.rodada = 0;
+  estado.rodadas = novoCalendario();
+  gerarPlanoComps();
+  iniciarComp(0);
+  estado.livres = sorteiaLivres();
+  const subiu = sobem.map(t => t.nome).join(", ");
+  const caiu = caem.map(t => t.nome).join(", ");
+  postar("Temporada " + estado.temporada + ". Subiram: " + subiu + ". Caíram: " + caiu + ".", "contrato");
+  mostrarToast("Nova temporada! Subiram " + sobem.length + " e caíram " + caem.length + ".");
+  render();
+}
+
 function avancar() {
   if (estado.tela === "aovivo") { mostrarToast("Partida em andamento."); return; }
+  if (!estado.comp && estado.campeaoBrasileiro && estado.rodada >= estado.rodadas.length) { fimDeTemporada(); return; }
   estado.semana = (estado.semana || 0) + 1;
   estado.calMes = 0;
   if (estado.comp) return avancarComp();
@@ -2115,10 +2265,11 @@ function renderBanco() {
 function setClube(sub) { estado.subclube = sub; render(); }
 function renderClube() {
   const sub = estado.subclube || "mercado";
-  const abas = [["mercado", "Mercado"], ["base", "Base"], ["propostas", "Propostas" + (estado.propostas.length ? " (" + estado.propostas.length + ")" : "")], ["banco", "Banco"], ["redes", "Redes"]];
+  const abas = [["mercado", "Mercado"], ["base", "Base"], ["propostas", "Propostas" + (estado.propostas.length ? " (" + estado.propostas.length + ")" : "")], ["banco", "Banco"], ["dividas", "Dívidas"], ["redes", "Redes"]];
   const seg = `<div class="seg">${abas.map(([k, l]) => `<button class="${sub === k ? "on" : ""}" onclick="setClube('${k}')">${l}</button>`).join("")}</div>`;
   if (sub === "banco") return seg + renderBanco();
   if (sub === "redes") return seg + renderRedes();
+  if (sub === "dividas") return seg + renderDividas();
   if (sub === "base") return seg + renderBase();
   if (sub === "propostas") return seg + renderPropostas();
   return seg + renderMercado();
@@ -2173,7 +2324,7 @@ function renderPropostas() {
 // Central: próximo jogo e próximos compromissos
 // Estado do jogo: captura e restauração (usado nas carreiras salvas e em "Nova carreira")
 const CHAVES_ESTADO = ["times", "rodadas", "rodada", "livres", "sel", "escalSel", "escolhido", "compIdx", "comp", "concluidas",
-  "campeaoBrasileiro", "velocidade", "comentJog", "planoComps", "semana", "agenda", "estat", "transferencias", "calMes", "dificuldade", "tecnico", "patrocinios", "patroAtivo", "base", "propostas", "contPropostas", "qualidadeBase", "feed", "torcida", "sequencia", "derrotasSeguidas", "contratadosBase", "emprestimos", "banco",
+  "campeaoBrasileiro", "serieB", "temporada", "velocidade", "comentJog", "planoComps", "semana", "agenda", "estat", "transferencias", "calMes", "dificuldade", "tecnico", "patrocinios", "patroAtivo", "base", "propostas", "contPropostas", "qualidadeBase", "feed", "torcida", "sequencia", "derrotasSeguidas", "contratadosBase", "emprestimos", "banco",
   "ultimaPartida", "subclube", "pais", "neg", "formacao", "subtab", "ultimaTela", "historico", "treinoBonus", "escalIdx"];
 function capturarEstado() {
   const snap = {};
@@ -2186,6 +2337,7 @@ function capturarEstado() {
 function restaurarEstado(snap) {
   for (const k of CHAVES_ESTADO) estado[k] = JSON.parse(JSON.stringify(snap[k] === undefined ? null : snap[k]));
   estado.meu = estado.times[snap.meuIdx] || estado.times[0];
+  aplicarElencosAPI(estado.times);
   for (const k of Object.keys(snap.titulos)) TITULOS[k] = JSON.parse(JSON.stringify(snap.titulos[k]));
   ID_JOGADOR = snap.ids[0];
   ID_POST = snap.ids[1];
@@ -2227,6 +2379,7 @@ function novaCarreira() {
   if (!ESTADO_INICIAL) return;
   restaurarEstado(ESTADO_INICIAL);
   aplicarElencosAPI(estado.times);
+  sortearDesempate(estado.times);
   estado.rodadas = novoCalendario();
   gerarPlanoComps();
   iniciarComp(0);
@@ -2388,13 +2541,27 @@ const MARCAS = [
   { marca: "Sorvete Gelado", pag: 45, meta: 3, multa: 150, logo: logoQ("#db2777", '<circle cx="20" cy="15" r="7" fill="#fbcfe8"/><polygon points="14,19 26,19 20,31" fill="#f59e0b"/>') },
   { marca: "Café do Campo", pag: 50, meta: 3, multa: 160, logo: logoQ("#78350f", '<rect x="11" y="14" width="14" height="13" rx="2" fill="#fde68a"/><path d="M25 17h3a3 3 0 0 1 0 6h-3" fill="none" stroke="#fde68a" stroke-width="2"/>') },
   { marca: "Clínica Vitta", pag: 80, meta: 4, multa: 260, logo: logoQ("#0e7490", '<rect x="16" y="9" width="8" height="22" rx="2" fill="#ecfeff"/><rect x="9" y="16" width="22" height="8" rx="2" fill="#ecfeff"/>') },
-  { marca: "Mecânica Rápida", pag: 65, meta: 4, multa: 220, logo: logoQ("#c2410c", '<circle cx="20" cy="20" r="7" fill="none" stroke="#fff" stroke-width="3"/><circle cx="20" cy="20" r="2.4" fill="#fff"/>') }
+  { marca: "Mecânica Rápida", pag: 65, meta: 4, multa: 220, logo: logoQ("#c2410c", '<circle cx="20" cy="20" r="7" fill="none" stroke="#fff" stroke-width="3"/><circle cx="20" cy="20" r="2.4" fill="#fff"/>') },
+  { marca: "Banco Vértice", pag: 0, meta: 4, multa: 0, logo: logoQ("#0f766e", '<polygon points="20,8 33,18 7,18" fill="#fff"/><rect x="9" y="21" width="22" height="3" fill="#fff"/><rect x="11" y="26" width="3" height="6" fill="#fff"/><rect x="18.5" y="26" width="3" height="6" fill="#fff"/><rect x="26" y="26" width="3" height="6" fill="#fff"/>') },
+  { marca: "Energia Sol", pag: 0, meta: 4, multa: 0, logo: logoQ("#f59e0b", '<circle cx="20" cy="20" r="7" fill="#fff"/><path d="M20 6v4M20 30v4M6 20h4M30 20h4M10 10l3 3M27 27l3 3M30 10l-3 3M10 30l3-3" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>') },
+  { marca: "Cerveja do Campo", pag: 0, meta: 4, multa: 0, logo: logoQ("#7c2d12", '<rect x="11" y="13" width="14" height="16" rx="2" fill="#fde68a"/><path d="M25 16h3a3 3 0 0 1 0 6h-3" fill="none" stroke="#fde68a" stroke-width="2.4"/><path d="M13 12q2-3 4 0t4 0t4 0" fill="none" stroke="#fff" stroke-width="2"/>') },
+  { marca: "Telecom Rápida", pag: 0, meta: 4, multa: 0, logo: logoQ("#6d28d9", '<polygon points="22,6 10,22 19,22 16,34 30,17 21,17" fill="#fde047"/>') },
+  { marca: "Seguros Porto Azul", pag: 0, meta: 4, multa: 0, logo: logoQ("#0369a1", '<path d="M20 7l11 4v9c0 7-5 11-11 13-6-2-11-6-11-13v-9z" fill="#fff"/><path d="M14 20l4 4 8-8" fill="none" stroke="#0369a1" stroke-width="2.6"/>') },
+  { marca: "Automóveis Norte", pag: 0, meta: 4, multa: 0, logo: logoQ("#334155", '<path d="M8 24v-4l4-6h16l4 6v4z" fill="#fff"/><circle cx="13" cy="26" r="3" fill="#fff"/><circle cx="27" cy="26" r="3" fill="#fff"/>') }
 ];
+// Clubes com receita de patrocínio maior (valores em R$ mil por partida)
+const CLUBES_GRANDES = ["Corinthians", "Palmeiras", "Flamengo", "São Paulo", "Santos", "Atlético-MG", "Botafogo", "Cruzeiro", "Grêmio", "Internacional", "Fluminense", "Vasco"];
+
 function gerarPatrocinios() {
   if (estado.patroAtivo) return;
+  const naSerieA = estado.times.includes(estado.meu);
+  const grande = naSerieA && CLUBES_GRANDES.includes(estado.meu.nome);
   estado.patrocinios = [...MARCAS].sort(() => Math.random() - 0.5).slice(0, 3).map((m, i) => {
     const anos = 1 + Math.floor(Math.random() * 3);
-    return { ...m, anos, meta: m.meta * anos, id: i + 1 };
+    const pag = grande
+      ? Math.round((10000 + Math.random() * 40000) / 500) * 500
+      : Math.round((4500 + Math.random() * 1000) / 500) * 500;
+    return { ...m, pag, multa: pag * 4, anos, meta: m.meta * anos, id: i + 1 };
   });
 }
 function aceitarPatrocinio(id) {
@@ -3267,9 +3434,17 @@ function renderCalendario() {
 
 function renderClassificacao() {
   const ord = estado.times.filter(t => !t.folga)
-    .sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)));
+    .sort((a, b) => (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)) || ((a.sorteio || 0) - (b.sorteio || 0)));
+  const zona = i => {
+    const n = ord.length;
+    if (i < 4) return "zona-lib";        // Libertadores
+    if (i < 6) return "zona-sul";        // Sul-Americana
+    if (i < 12) return "zona-g";         // pré-Libertadores / Sul-Americana
+    if (i >= n - 4) return "zona-rebx";  // rebaixamento
+    return "";
+  };
   const linhas = ord.map((t, i) => `
-    <div class="tab-l ${t === estado.meu ? "eu" : ""}">
+    <div class="tab-l ${t === estado.meu ? "eu" : ""} ${zona(i)}">
       <span class="pos-n ${i < 3 ? "t3" : ""}">${i + 1}</span>
       <div class="nome-clube">${escudo(t)}<span>${t.nome}</span></div>
       <span class="n">${t.jg}</span>
@@ -3375,6 +3550,9 @@ estado.slots = lerSlots();
 gerarPlanoComps();
 iniciarComp(0);
 captarJovens(true);
+aplicarDividas(estado.times);
+sortearDesempate(estado.times);
+estado.serieB = SERIE_B.map(c => criarTime(c));
 ESTADO_INICIAL = capturarEstado();
 render();
 carregarElencosAPI();
