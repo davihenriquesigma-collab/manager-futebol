@@ -825,6 +825,10 @@
   .tab-l.zona-g { box-shadow: inset 4px 0 0 #22c55e; }
   .tab-l.zona-rebx { box-shadow: inset 4px 0 0 #ef4444; }
   .tab-l.zona-lib .p, .tab-l.zona-g .p { color: var(--txt); }
+  .conversa { display: flex; flex-direction: column; gap: 8px; }
+  .bolha-emp { background: rgba(34,211,238,.12); border: 1px solid rgba(34,211,238,.25); border-radius: 14px 14px 14px 4px; padding: 12px 14px; font-size: 14px; line-height: 1.5; max-width: 92%; }
+  .grupos { margin-bottom: 8px; }
+  .chips-sub { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
 </style>
 </head>
 <body>
@@ -1122,12 +1126,23 @@ function aplicarElencoApi(elenco, api) {
                    MEI: ["MEI", "VOL", "PON"], PON: ["PON", "ATA", "MEI"], ATA: ["ATA", "PON"] };
   const pools = {};
   api.forEach(a => { (pools[a.pos] = pools[a.pos] || []).push(a); });
+  const preenchidos = new Set();
+  const naoPreenchidos = [];
   elenco.forEach(j => {
     const ordem = COMPAT[j.pos] || [j.pos];
     for (const p of ordem) {
-      if (pools[p] && pools[p].length) { aplicarDadosApi(j, pools[p].shift()); return; }
+      if (pools[p] && pools[p].length) { aplicarDadosApi(j, pools[p].shift()); preenchidos.add(j); return; }
     }
-    // sem jogador compatível: a vaga fica com o nome provisório
+    naoPreenchidos.push(j);
+  });
+  // sobrou jogador da API de outra posição? usa nas vagas que faltaram
+  const sobras = Object.values(pools).flat();
+  naoPreenchidos.forEach(j => {
+    if (sobras.length) { aplicarDadosApi(j, sobras.shift()); preenchidos.add(j); }
+  });
+  // vaga sem nenhum jogador disponível sai do elenco (nunca fica com nome antigo)
+  [...elenco].reverse().forEach(j => {
+    if (!preenchidos.has(j) && elenco.length > 14) elenco.splice(elenco.indexOf(j), 1);
   });
 }
 
@@ -1216,6 +1231,91 @@ function virarSAF() {
   render();
 }
 
+// ===== Empresas investidoras (SAF): cada clube recebe 3 opções sorteadas =====
+const EMPRESAS_SAF = [
+  { nome: "Horizonte Capital Esportes", logo: logoQ("#0f766e", '<rect x="9" y="22" width="5" height="10" fill="#fff"/><rect x="17.5" y="15" width="5" height="17" fill="#fff"/><rect x="26" y="9" width="5" height="23" fill="#fff"/>'), perfil: "Fundo de longo prazo", reputacao: 8, risco: "baixo", aporte: 40, participacao: 60, divida: 40,
+    historia: "Já investiu em quatro clubes e manteve as contas em dia. Costuma deixar o treinador escolher os jogadores." },
+  { nome: "Vértice Sports Group", logo: logoQ("#111827", '<polygon points="20,7 33,31 7,31" fill="#fff"/><polygon points="20,15 27,27 13,27" fill="#f43f5e"/>'), perfil: "Compra e venda de jogadores", reputacao: 5, risco: "alto", aporte: 60, participacao: 70, divida: 25,
+    historia: "Comprou dois clubes e vendeu os principais jogadores antes do fim dos contratos." },
+  { nome: "Rio Azul Investimentos", logo: logoQ("#1d4ed8", '<path d="M20 8c6 6 9 11 9 16a9 9 0 0 1-18 0c0-5 3-10 9-16z" fill="#fff"/>'), perfil: "Empresa familiar regional", reputacao: 7, risco: "médio", aporte: 30, participacao: 49, divida: 30,
+    historia: "Pouco histórico no futebol, mas paga as obrigações em dia e pede pouca interferência." },
+  { nome: "Atlas Desportos", logo: logoQ("#7c3aed", '<circle cx="20" cy="20" r="11" fill="none" stroke="#fff" stroke-width="2.4"/><path d="M9 20h22M20 9c-4 4-4 18 0 22M20 9c4 4 4 18 0 22" fill="none" stroke="#fff" stroke-width="1.6"/>'), perfil: "Tecnologia e marketing", reputacao: 6, risco: "médio", aporte: 50, participacao: 55, divida: 35,
+    historia: "Foco em patrocínios e redes sociais. Quer crescer a torcida rápido, com muitas ações de marketing." },
+  { nome: "Nordeste Futebol Holding", logo: logoQ("#b45309", '<circle cx="14" cy="16" r="5" fill="#fff"/><circle cx="26" cy="16" r="5" fill="#fff"/><path d="M8 30c0-5 3-8 6-8s6 3 6 8M20 30c0-5 3-8 6-8s6 3 6 8" fill="#fff"/>'), perfil: "Grupo de clubes", reputacao: 7, risco: "baixo", aporte: 35, participacao: 51, divida: 30,
+    historia: "Administra outros clubes da região. Contratos longos e exigências claras de resultado." },
+  { nome: "Bússola Capital", logo: logoQ("#334155", '<circle cx="20" cy="20" r="11" fill="none" stroke="#fff" stroke-width="2.2"/><polygon points="20,11 23,20 20,29 17,20" fill="#f59e0b"/>'), perfil: "Fundo de risco", reputacao: 4, risco: "alto", aporte: 70, participacao: 75, divida: 20,
+    historia: "Aporte grande, mas exige retorno em pouco tempo. Já trocou de treinador três vezes em um ano." },
+  { nome: "Estádio Forte Partners", logo: logoQ("#166534", '<path d="M7 28h26M10 28V17l10-7 10 7v11" fill="none" stroke="#fff" stroke-width="2.4"/><rect x="16" y="20" width="8" height="8" fill="#fff"/>'), perfil: "Gestão de estádios", reputacao: 6, risco: "médio", aporte: 45, participacao: 60, divida: 50,
+    historia: "Assume boa parte da dívida, mas cobra pelo uso do estádio e dos espaços comerciais." },
+  { nome: "Lusitana Ventures", logo: logoQ("#9f1239", '<path d="M9 26l6-14 5 9 4-5 7 10z" fill="#fff"/><circle cx="29" cy="13" r="3" fill="#fff"/>'), perfil: "Investimento internacional", reputacao: 5, risco: "médio", aporte: 55, participacao: 65, divida: 30,
+    historia: "Sede no exterior. Pouca experiência com torcida brasileira e muitas exigências de auditoria." }
+];
+
+function sortearEmpresasSAF(m) {
+  if (!m.empresasSAF || !m.empresasSAF.length) {
+    m.empresasSAF = [...EMPRESAS_SAF].sort(() => Math.random() - 0.5).slice(0, 3).map(e => e.nome);
+  }
+  return m.empresasSAF.map(n => EMPRESAS_SAF.find(e => e.nome === n));
+}
+
+function abrirSAF() {
+  const m = estado.meu;
+  if (m.saf) return;
+  const empresas = sortearEmpresasSAF(m);
+  $("folha").innerHTML = `
+    <div class="pre-titulo">Propostas de SAF</div>
+    <h3 style="margin:6px 0 12px;color:var(--gold)">Escolha uma empresa</h3>
+    ${empresas.map(e => {
+      const aporte = Math.round(m.divida * e.aporte / 100);
+      return `<button class="card" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;margin-bottom:10px;padding:12px" onclick="verEmpresaSAF('${e.nome}')">
+        ${e.logo}
+        <div><strong>${e.nome}</strong>
+        <div class="resumo">${e.perfil} · risco ${e.risco}</div>
+        <div class="resumo">Aporte ${fmtReal(aporte * 500000)} · ${e.participacao}% das ações</div></div>
+      </button>`;
+    }).join("")}
+    <div class="botoes" style="margin-top:6px"><button class="fechar" onclick="fecharModal(true)">Agora não</button></div>`;
+  $("fundo").classList.add("aberto");
+}
+
+function verEmpresaSAF(nome) {
+  const m = estado.meu;
+  const e = EMPRESAS_SAF.find(x => x.nome === nome);
+  const aporte = Math.round(m.divida * e.aporte / 100);
+  const dividaAssumida = Math.round(m.divida * e.divida / 100);
+  $("folha").innerHTML = `
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">${e.logo}<div><div class="pre-titulo">${e.perfil}</div><h3 style="margin:4px 0 0;color:var(--gold)">${e.nome}</h3></div></div>
+    <div class="card" style="padding:12px">
+      <div class="rep-linha"><span>Reputação</span><b>${e.reputacao} / 10</b></div>
+      <div class="rep-linha"><span>Risco</span><b>${e.risco}</b></div>
+      <div class="rep-linha"><span>Aporte</span><b>${fmtReal(aporte * 500000)}</b></div>
+      <div class="rep-linha"><span>Participação nas ações</span><b>${e.participacao}%</b></div>
+      <div class="rep-linha"><span>Dívida que a empresa assume</span><b>${fmtReal(dividaAssumida * 500000)}</b></div>
+    </div>
+    <div class="card" style="padding:12px;margin-top:10px">
+      <strong>Histórico</strong>
+      <p class="resumo" style="margin:6px 0 0">${e.historia}</p>
+    </div>
+    <div class="botoes" style="margin-top:12px">
+      <button class="primario" onclick="aceitarSAF(${aporte}, ${e.participacao}, ${dividaAssumida}, '${e.nome}')">Confirmar SAF</button>
+      <button class="fechar" onclick="abrirSAF()">Voltar</button>
+    </div>`;
+}
+
+function aceitarSAF(aporte, participacao, dividaAssumida, nomeEmpresa) {
+  const m = estado.meu;
+  if (m.saf) return;
+  m.saf = true;
+  m.orcamento = Math.round((m.orcamento + aporte) * 10) / 10;
+  m.divida = Math.max(0, m.divida - dividaAssumida);
+  m.participacaoSAF = participacao;
+  m.empresaSAF = nomeEmpresa;
+  estado.torcida = Math.max(0, estado.torcida - 10);
+  fecharModal(true);
+  postar(`O clube virou SAF com ${nomeEmpresa}. Investidor entrou com ${fmtReal(aporte * 500000)} e ficou com ${participacao}% das ações.`, "contrato");
+  render();
+}
+
 function renegociarDivida() {
   const m = estado.meu;
   if (m.renegociou || m.divida <= 0) return;
@@ -1230,21 +1330,31 @@ function renderDividas() {
   if (!m) return "";
   const quitado = m.divida <= 0;
   return `
-    <div class="secao"><h2>Dívidas</h2><span>${m.saf ? "SAF" : "clube associativo"}</span></div>
+    <div class="secao"><h2>Dívidas</h2><span>${m.saf ? "SAF · " + (m.empresaSAF || "") : "clube associativo"}</span></div>
     <div class="card" style="padding:14px">
-      <div class="rep-linha"><span>Dívida total (real)</span><b>${fmtReal(m.dividaReal || 0)}</b></div>
-      <div class="rep-linha"><span>Dívida no jogo</span><b>${fmtMil(m.divida)}</b></div>
-      <div class="rep-linha"><span>Parcela por temporada</span><b>${fmtMil(m.parcela)}${m.renegociou ? " (renegociada)" : ""}</b></div>
+      <div class="rep-linha"><span>Dívida restante</span><b>${fmtReal(m.divida * 500000)}</b></div>
+      <div class="rep-linha"><span>Parcela por temporada</span><b>${fmtReal(m.parcela * 500000)}${m.renegociou ? " (renegociada)" : ""}</b></div>
       <div class="rep-linha"><span>Caixa do clube</span><b>${fmtMil(m.orcamento)}</b></div>
     </div>
     ${quitado ? '<p class="resumo" style="text-align:center;margin-top:12px">Sem dívidas.</p>' : `
     <div class="botoes" style="margin-top:12px">
-      <button onclick="pagarDivida(${Math.round(m.parcela) || 1})">Pagar parcela agora</button>
-      <button onclick="pagarDivida(${Math.round(m.divida / 4) || 1})">Pagar 25% da dívida</button>
+      <button onclick="pagarDivida(${Math.round(m.parcela) || 1})">Pagar parcela (${fmtReal(m.parcela * 500000)})</button>
+      <button onclick="pagarDivida(${Math.round(m.divida / 4) || 1})">Pagar 25% (${fmtReal(m.divida * 125000)})</button>
       <button onclick="renegociarDivida()" ${m.renegociou ? "disabled" : ""}>Renegociar parcela</button>
-      <button class="primario" onclick="virarSAF()" ${m.saf ? "disabled" : ""}>${m.saf ? "Já é SAF" : "Virar SAF"}</button>
+      <button class="primario" onclick="abrirSAF()" ${m.saf ? "disabled" : ""}>${m.saf ? "Já é SAF" : "Virar SAF"}</button>
     </div>`}
     <p class="nota-rodape">Virar SAF traz um investidor com aporte e assume parte da dívida, mas a torcida reage mal (−10 de torcida).</p>`;
+}
+
+// Orçamento inicial (mil): grandes R$ 125 mi, médios R$ 35 mi, pequenos R$ 15 mi, Série B R$ 7 mi
+const GRANDES_ORC = ["Corinthians", "Palmeiras", "Flamengo", "São Paulo", "Santos", "Atlético-MG", "Cruzeiro", "Grêmio", "Internacional", "Fluminense"];
+const MEDIOS_SERIE_A = ["Bahia", "Bragantino", "Athletico-PR", "Botafogo", "Vasco"];
+const PEQUENOS_SERIE_A = ["Chapecoense", "Remo", "Vitória", "Coritiba", "Mirassol"];
+function orcamentoInicial(nome) {
+  if (GRANDES_ORC.includes(nome)) return 125000;
+  if (MEDIOS_SERIE_A.includes(nome)) return 35000;
+  if (PEQUENOS_SERIE_A.includes(nome)) return 15000;
+  return 7000; // Série B e clubes provisórios
 }
 
 function montarElenco(clube) {
@@ -1263,7 +1373,7 @@ function montarElenco(clube) {
 
 function criarTime(clube) {
   return { nome: clube.nome, sigla: clube.sigla, cor: clube.cor, texto: clube.texto,
-           orcamento: 6000, elenco: montarElenco(clube), pts: 0, gf: 0, ga: 0, jg: 0, folga: false };
+           orcamento: orcamentoInicial(clube.nome), elenco: montarElenco(clube), pts: 0, gf: 0, ga: 0, jg: 0, folga: false };
 }
 
 function gerarRodadas(n) {
@@ -2263,10 +2373,36 @@ function renderBanco() {
 
 // Clube: mercado, banco e redes em um só lugar
 function setClube(sub) { estado.subclube = sub; render(); }
+function setSubFin(f) { estado.subfin = f; render(); }
+// Organização das abas: grupos no topo e as abas do grupo logo abaixo
+function barraGrupos(grupos, atual, fn) {
+  const grupo = grupos.find(g => g.abas.some(([k]) => k === atual)) || grupos[0];
+  const topo = `<div class="seg grupos">${grupos.map(g => `<button class="${g === grupo ? "on" : ""}" onclick="${fn}('${g.abas[0][0]}')">${g.nome}</button>`).join("")}</div>`;
+  const sub = `<div class="chips-sub">${grupo.abas.map(([k, l]) => `<button class="chip ${atual === k ? "on" : ""}" onclick="${fn}('${k}')">${l}</button>`).join("")}</div>`;
+  return topo + sub;
+}
+
+const GRUPOS_CLUBE = [
+  { nome: "Elenco", abas: [["mercado", "Mercado"], ["base", "Base"]] },
+  { nome: "Dinheiro", abas: [["propostas", "Propostas"], ["banco", "Banco"], ["dividas", "Dívidas"]] },
+  { nome: "Torcida", abas: [["redes", "Redes"]] }
+];
+
+const GRUPOS_COMPETICOES = [
+  { nome: "Campeonatos", abas: [["brasileiro", "Brasileiro"], ["estaduais", "Estaduais"], ["libertadores", "Libertadores"], ["serieb", "Série B"]] },
+  { nome: "Histórico", abas: [["titulos", "Títulos"]] }
+];
+
 function renderClube() {
   const sub = estado.subclube || "mercado";
-  const abas = [["mercado", "Mercado"], ["base", "Base"], ["propostas", "Propostas" + (estado.propostas.length ? " (" + estado.propostas.length + ")" : "")], ["banco", "Banco"], ["dividas", "Dívidas"], ["redes", "Redes"]];
-  const seg = `<div class="seg">${abas.map(([k, l]) => `<button class="${sub === k ? "on" : ""}" onclick="setClube('${k}')">${l}</button>`).join("")}</div>`;
+  const seg = barraGrupos(GRUPOS_CLUBE, sub, "setClube");
+  if (sub === "financas") {
+    const fin = estado.subfin || "banco";
+    const subseg = `<div class="neg-linha" style="margin-bottom:12px">
+      <button class="chip ${fin === "banco" ? "on" : ""}" onclick="setSubFin('banco')">Banco</button>
+      <button class="chip ${fin === "dividas" ? "on" : ""}" onclick="setSubFin('dividas')">Dívidas</button></div>`;
+    return seg + subseg + (fin === "dividas" ? renderDividas() : renderBanco());
+  }
   if (sub === "banco") return seg + renderBanco();
   if (sub === "redes") return seg + renderRedes();
   if (sub === "dividas") return seg + renderDividas();
@@ -2552,15 +2688,21 @@ const MARCAS = [
 // Clubes com receita de patrocínio maior (valores em R$ mil por partida)
 const CLUBES_GRANDES = ["Corinthians", "Palmeiras", "Flamengo", "São Paulo", "Santos", "Atlético-MG", "Botafogo", "Cruzeiro", "Grêmio", "Internacional", "Fluminense", "Vasco"];
 
+// Faixas de patrocínio por partida (R$ mil): 20% a 40% do orçamento da faixa do clube
+function faixaPatrocinio(t) {
+  // 20% a 40% do orçamento inicial da faixa do clube, por partida
+  const base = orcamentoInicial(t.nome);
+  return [Math.round(base * 0.2 / 100) * 100, Math.round(base * 0.4 / 100) * 100];
+}
+
 function gerarPatrocinios() {
   if (estado.patroAtivo) return;
-  const naSerieA = estado.times.includes(estado.meu);
-  const grande = naSerieA && CLUBES_GRANDES.includes(estado.meu.nome);
+  // valor por partida (R$ mil) conforme a faixa do clube
+  const faixa = faixaPatrocinio(estado.meu);
   estado.patrocinios = [...MARCAS].sort(() => Math.random() - 0.5).slice(0, 3).map((m, i) => {
     const anos = 1 + Math.floor(Math.random() * 3);
-    const pag = grande
-      ? Math.round((10000 + Math.random() * 40000) / 500) * 500
-      : Math.round((4500 + Math.random() * 1000) / 500) * 500;
+    const [min, max] = faixa;
+    const pag = Math.round((min + Math.random() * (max - min)) / 500) * 500;
     return { ...m, pag, multa: pag * 4, anos, meta: m.meta * anos, id: i + 1 };
   });
 }
@@ -3147,6 +3289,7 @@ function renderMercadoAntigo() {
     <p class="nota-rodape">Jogadores reais dos outros clubes escolhidos. Ao contratar, saem do clube de origem.</p>`;
 }
 
+function setSubOut(o) { estado.subout = o; render(); }
 function setTabTab(t) { estado.subtab = t; render(); }
 
 // Países: cada país reúne as suas competições. Por enquanto só o Brasil está disponível.
@@ -3194,14 +3337,7 @@ function renderPaisesInicio() {
 
 function renderTabela() {
   const sub = ["estaduais", "libertadores", "titulos", "serieb", "paulistao"].includes(estado.subtab) ? estado.subtab : "brasileiro";
-  const seg = `<div class="seg">
-    <button class="${sub === "brasileiro" ? "on" : ""}" onclick="setTabTab('brasileiro')">Brasileiro</button>
-    <button class="${sub === "estaduais" ? "on" : ""}" onclick="setTabTab('estaduais')">Estaduais</button>
-    <button class="${sub === "libertadores" ? "on" : ""}" onclick="setTabTab('libertadores')">Libertadores</button>
-    <button class="${sub === "titulos" ? "on" : ""}" onclick="setTabTab('titulos')">Títulos</button>
-    <button class="${sub === "serieb" ? "on" : ""}" onclick="setTabTab('serieb')">Série B</button>
-    <button class="${sub === "paulistao" ? "on" : ""}" onclick="setTabTab('paulistao')">Paulistão</button>
-  </div>`;
+  const seg = barraGrupos(GRUPOS_COMPETICOES, sub, "setTabTab");
   if (sub === "estaduais") return seg + renderBlocoComp("carioca") + renderBlocoComp("paulista");
   if (sub === "libertadores") return seg + renderBlocoComp("libertadores");
   if (sub === "titulos") return seg + renderTitulos();
@@ -3514,7 +3650,7 @@ function render() {
     ? `${estado.comp.def.abrev} · ${estado.comp.faseNome}`
     : `Rodada ${Math.min(estado.rodada + 1, total)}/${total}`;
   $("orcamento").textContent = `Orçamento ${fmtMil(meu.orcamento)}`;
-  $("barraOrc").style.width = `${Math.max(0, Math.min(100, meu.orcamento / 100))}%`;
+  $("barraOrc").style.width = `${Math.max(0, Math.min(100, meu.orcamento / 1500))}%`;
 
   for (const t of ["jogos", "elenco", "clube", "tabela", "manager"]) {
     $("t-" + t).classList.toggle("on", estado.tela === t);
